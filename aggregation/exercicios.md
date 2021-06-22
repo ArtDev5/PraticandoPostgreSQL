@@ -107,7 +107,124 @@
 
     Question: Produce a list of the total number of hours booked per facility, remembering that a slot lasts half an hour. The output table should consist of the facility id, name, and hours booked, sorted by facility id. Try formatting the hours to two decimal places.
 
-    Answer: select fac.facid, fac.name, format(sum(books.slots)/2, '#.00') as "Total Hours" from cd.facilities fac
-        inner join cd.bookings books on fac.facid = books.facid
-        group by fac.facid
-        order by fac.facid
+    Answer: select fac.facid, fac.name, trim(to_char(sum(books.slots)/2.0, '9999D99'))
+
+            as "Total Hours" from cd.facilities fac
+            inner join cd.bookings books on fac.facid = books.facid
+            group by fac.facid
+            order by fac.facid
+
+
+# List each member's first booking after September 1st 2012
+
+    Question: Produce a list of each member name, id, and their first booking after September 1st 2012. Order by member ID.
+
+    Answer: select memb.surname, memb.firstname, memb.memid, min(books.starttime) as starttime 
+            from cd.members memb inner join cd.bookings books on memb.memid = books.memid
+            where books.starttime > '2012-09-01 00:00:00'
+            group by memb.memid
+            order by memb.memid
+
+# Produce a list of member names, with each row containing the total member count
+
+    Question: Produce a list of member names, with each row containing the total member count. Order by join date, and include guest members.
+
+    Answer: select (select count(*) from cd.members) as count, firstname, surname
+	        from cd.members
+            order by joindate
+
+# Produce a numbered list of members
+
+    Question: Produce a monotonically increasing numbered list of members (including guests), ordered by their date of joining. Remember that member IDs are not guaranteed to be sequential.
+
+    Answer: select row_number() over(order by joindate), firstname, surname
+            from cd.members
+            order by joindate
+
+# Output the facility id that has the highest number of slots booked, again
+
+    Question: Output the facility id that has the highest number of slots booked. Ensure that in the event of a tie, all tieing results get output.
+
+    Answer: select facid, total from (
+	        select facid, total, rank() over (order by total desc) rank from (
+            select facid, sum(slots) total
+	        from cd.bookings
+	        group by facid
+            ) as sumslots
+	        ) as ranked
+            where rank = 1
+
+# Rank members by (rounded) hours used
+
+    Question: Produce a list of members (including guests), along with the number of hours they've booked in facilities, rounded to the nearest ten hours. Rank them by this rounded figure, producing output of first name, surname, rounded hours, rank. Sort by rank, surname, and first name.
+
+    Answer: select firstname, surname, hours, rank() over (order by hours desc) from
+	(select firstname, surname,
+	((sum(bks.slots)+10)/20)*10 as hours
+
+    from cd.bookings bks
+	inner join cd.members mems
+	on bks.memid = mems.memid
+	group by mems.memid
+	) as subq
+    order by rank, surname, firstname;
+
+# Find the top three revenue generating facilities
+
+    Question: Produce a list of the top three revenue generating facilities (including ties). Output facility name and rank, sorted by rank and facility name.
+
+    Answer: select name, rank from (
+            select facs.name as name, rank() over (order by sum(case when memid = 0
+            then slots * facs.guestcost else slots* facs.membercost end) desc) as rank
+
+            from cd.bookings books inner join cd.facilities facs on
+            books.facid = facs.facid
+            group by facs.name) as subquery
+            where rank <= 3
+            order by rank;
+
+# Classify facilities by value
+
+    Question: Classify facilities into equally sized groups of high, average, and low based on their revenue. Order by classification and facility name.
+
+    Answer: select name, case when class = 1 then 'high'
+            when class = 2 then 'average'
+            else 'low' end revenue from (
+            	select facs.name as name, ntile(3) over (order by sum(case
+            	when memid = 0 then slots*guestcost else
+            	slots*membercost end) desc) as class
+
+              	from cd.bookings books inner join cd.facilities facs on
+            	books.facid = facs.facid
+              	group by facs.name) as subq
+            	order by class, name
+
+# Calculate the payback time for each facility
+
+    Question: Based on the 3 complete months of data so far, calculate the amount of time each facility will take to repay its cost of ownership. Remember to take into account ongoing monthly maintenance. Output facility name and payback time in months, order by facility name. Don't worry about differences in month lengths, we're only looking for a rough value here!
+
+    Answer: select facs.name as name, facs.initialoutlay/((sum(case
+												   
+            when memid = 0 then slots * facs.guestcost
+            else slots * membercost end)/3) - facs.monthlymaintenance) as months
+
+            from cd.bookings bks inner join cd.facilities facs on 
+            bks.facid = facs.facid
+            group by facs.facid
+            order by name;
+
+# Calculate a rolling average of total revenue
+
+    Question: For each day in August 2012, calculate a rolling average of total revenue over the previous 15 days. Output should contain date and revenue columns, sorted by the date. Remember to account for the possibility of a day having zero revenue. This one's a bit tough, so don't be afraid to check out the hint!
+
+    Answer: select dategen.date, (select sum(case
+            when memid = 0 then slots * facs.guestcost
+            else slots * membercost end) as rev
+            
+            from cd.bookings bks inner join cd.facilities facs on 
+            bks.facid = facs.facid where bks.starttime > dategen.date - interval '14 days'
+            and bks.starttime < dategen.date + interval '1 day')/15 as revenue
+            
+            from ( select 	cast(generate_series(timestamp '2012-08-01',
+            '2012-08-31','1 day') as date) as date )  as dategen
+            order by dategen.date
